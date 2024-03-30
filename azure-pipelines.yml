@@ -8,11 +8,11 @@
 ##
 
 parameters:
-  tool_chain_tag: ''
-  build_pkgs: ''
-  build_targets: ''
-  build_archs: ''
-  usePythonVersion: ''
+  tool_chain_tag: 'VS2019'
+  build_pkgs: 'MdePkg'
+  build_targets: 'NOOPT'
+  build_archs: 'X64'
+  usePythonVersion: '3.12.0'
   extra_install_step: []
 
 steps:
