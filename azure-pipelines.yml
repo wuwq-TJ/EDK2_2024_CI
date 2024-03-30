@@ -26,3 +26,4 @@ steps:
       BASETOOLS_BUILD*.*
     flattenFolders: true
   condition: and(gt(variables.pkg_count, 0), succeededOrFailed())
+
