@@ -1,150 +1,132 @@
-
 ## @file
-# File steps.yml
+# File templates/pr-gate-build-job.yml
 #
-# template file containing the steps to build
+# template file used to build supported packages.
 #
 # Copyright (c) Microsoft Corporation.
+# Copyright (c) 2020 - 2021, ARM Limited. All rights reserved.<BR>
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
 
 parameters:
-- name: tool_chain_tag
-  type: string
-  default: ''
-- name: build_pkg
-  type: string
-  default: ''
-- name: build_target
-  type: string
-  default: ''
-- name: build_arch
-  type: string
-  default: ''
-- name: build_file
-  type: string
-  default: ''
-- name: build_flags
-  type: string
-  default: ''
-- name: run_flags
-  type: string
-  default: ''
+  tool_chain_tag: ''
+  vm_image: ''
+  arch_list: ''
+  extra_install_step: []
+  usePythonVersion: ''
+  container: ''
 
-- name: extra_install_step
-  type: stepList
-  default: []
-- name: usePythonVersion
-  type: string
-  default: ''
+# Build step
+jobs:
 
-steps:
-- bash: |
-    echo "##vso[task.prependpath]${HOME}/.local/bin"
-    echo "new PATH=${PATH}"
-  displayName: Set PATH
-  condition: eq('${{ parameters.tool_chain_tag }}', 'GCC5')
+- job: Build_${{ parameters.tool_chain_tag }}
+  timeoutInMinutes: 120
+  #Use matrix to speed up the build process
+  strategy:
+    matrix:
+      ${{ if eq(parameters.tool_chain_tag, 'GCC5') }}:
+        TARGET_GCC_ONLY:
+          Build.Pkgs: 'EmbeddedPkg'
+          Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_ARM_ARMPLATFORM:
+        Build.Pkgs: 'ArmPkg,ArmPlatformPkg'
+        Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_MDE_CPU:
+        Build.Pkgs: 'MdePkg,UefiCpuPkg'
+        Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_MDEMODULE_DEBUG:
+        Build.Pkgs: 'MdeModulePkg'
+        Build.Targets: 'DEBUG,NOOPT'
+      TARGET_MDEMODULE_RELEASE:
+        Build.Pkgs: 'MdeModulePkg'
+        Build.Targets: 'RELEASE,NO-TARGET'
+      TARGET_NETWORK:
+        Build.Pkgs: 'NetworkPkg,RedfishPkg'
+        Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_OTHER:
+        Build.Pkgs: 'PcAtChipsetPkg,PrmPkg,ShellPkg,SourceLevelDebugPkg,StandaloneMmPkg,SignedCapsulePkg'
+        Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_FMP_FAT_TEST:
+        Build.Pkgs: 'FmpDevicePkg,FatPkg,UnitTestFrameworkPkg,DynamicTablesPkg'
+        Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_CRYPTO_DEBUG:
+        Build.Pkgs: 'CryptoPkg'
+        Build.Targets: 'DEBUG,NOOPT'
+      TARGET_CRYPTO_RELEASE:
+        Build.Pkgs: 'CryptoPkg'
+        Build.Targets: 'RELEASE,NO-TARGET'
+      TARGET_FSP:
+        Build.Pkgs: 'IntelFsp2Pkg,IntelFsp2WrapperPkg'
+        Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_SECURITY:
+        Build.Pkgs: 'SecurityPkg'
+        Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_UEFIPAYLOAD:
+        Build.Pkgs: 'UefiPayloadPkg'
+        Build.Targets: 'DEBUG,RELEASE,NO-TARGET,NOOPT'
+      TARGET_PLATFORMS:
+        # For Platforms only check code. Leave it to Platform CI
+        # to build them.
+        Build.Pkgs: 'ArmVirtPkg,EmulatorPkg,OvmfPkg'
+        Build.Targets: 'NO-TARGET,NOOPT'
 
-- checkout: self
-  clean: true
-  fetchDepth: 1
+  workspace:
+    clean: all
 
-- task: UsePythonVersion@0
-  inputs:
-    versionSpec: ${{ parameters.usePythonVersion }}
-    architecture: "x64"
-  condition: ne('${{ parameters.usePythonVersion }}', '')
+  pool:
+    vmImage: ${{ parameters.vm_image }}
 
-- script: pip install -r pip-requirements.txt --upgrade
-  displayName: 'Install/Upgrade pip modules'
+  ${{ if not(eq(parameters.container, '')) }}:
+    container: ${{ parameters.container }}
 
-# Set default
-- bash: echo "##vso[task.setvariable variable=pkg_count]${{ 1 }}"
+  steps:
+  - template: pr-gate-steps.yml
+    parameters:
+      tool_chain_tag: ${{ parameters.tool_chain_tag }}
+      build_pkgs: $(Build.Pkgs)
+      build_targets: $(Build.Targets)
+      build_archs: ${{ parameters.arch_list }}
+      usePythonVersion: ${{ parameters.usePythonVersion }}
+      extra_install_step: ${{ parameters.extra_install_step }}
 
-# Fetch the target branch so that pr_eval can diff them.
-# Seems like azure pipelines/github changed checkout process in nov 2020.
-- script: git fetch origin $(System.PullRequest.targetBranch)
-  displayName: fetch target branch
-  condition: eq(variables['Build.Reason'], 'PullRequest')
+- job: Build_${{ parameters.tool_chain_tag }}_TARGET_CODE_COVERAGE
+  dependsOn: Build_${{ parameters.tool_chain_tag }}
+  workspace:
+    clean: all
 
-# trim the package list if this is a PR
-- task: CmdLine@1
-  displayName: Check if ${{ parameters.build_pkg }} need testing
-  inputs:
-    filename: stuart_pr_eval
-    arguments: -c ${{ parameters.build_file }} -t ${{ parameters.build_target}} -a ${{ parameters.build_arch}} --pr-target origin/$(System.PullRequest.targetBranch) --output-count-format-string "##vso[task.setvariable variable=pkg_count;isOutpout=true]{pkgcount}"
-  condition: eq(variables['Build.Reason'], 'PullRequest')
+  pool:
+    vmImage: 'windows-2019'
 
- # Setup repo
-- task: CmdLine@1
-  displayName: Setup
-  inputs:
-    filename: stuart_setup
-    arguments: -c ${{ parameters.build_file }} TOOL_CHAIN_TAG=${{ parameters.tool_chain_tag}} -t ${{ parameters.build_target}} -a ${{ parameters.build_arch}} ${{ parameters.build_flags}}
-  condition: and(gt(variables.pkg_count, 0), succeeded())
+  steps:
+    - checkout: self
+      clean: true
+      fetchDepth: 1
+      submodules: true
 
-# Stuart Update
-- task: CmdLine@1
-  displayName: Update
-  inputs:
-    filename: stuart_update
-    arguments: -c ${{ parameters.build_file }} TOOL_CHAIN_TAG=${{ parameters.tool_chain_tag}} -t ${{ parameters.build_target}} -a ${{ parameters.build_arch}} ${{ parameters.build_flags}}
-  condition: and(gt(variables.pkg_count, 0), succeeded())
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download Build Artifacts'
+      inputs:
+        buildType: 'current'
+        targetPath: '$(Build.ArtifactStagingDirectory)'
 
-# build basetools
-#   do this after setup and update so that code base dependencies
-#   are all resolved.
-- template: basetools-build-steps.yml
-  parameters:
-    tool_chain_tag: ${{ parameters.tool_chain_tag }}
+    - powershell: Write-Host "##vso[task.setvariable variable=is_code_coverage]0"
+      displayName: Give default value for whether CodeCoverage or not
 
-# Potential Extra steps
-- ${{ parameters.extra_install_step }}
+    - powershell: if (Test-Path -Path $(Build.ArtifactStagingDirectory)/**/coverage.xml) {Write-Host "##vso[task.setvariable variable=is_code_coverage]1"}
+      displayName: Check coverage.xml exist or not
 
-# Build
-- task: CmdLine@1
-  displayName: Build
-  inputs:
-    filename: stuart_build
-    arguments: -c ${{ parameters.build_file }} TOOL_CHAIN_TAG=${{ parameters.tool_chain_tag}} TARGET=${{ parameters.build_target}} -a ${{ parameters.build_arch}} ${{ parameters.build_flags}}
-  condition: and(gt(variables.pkg_count, 0), succeeded())
+    - task: CmdLine@2
+      displayName: Create code coverage report
+      inputs:
+        script: |
+          dotnet tool install -g dotnet-reportgenerator-globaltool
+          reportgenerator -reports:$(Build.ArtifactStagingDirectory)/**/coverage.xml -targetdir:$(Build.ArtifactStagingDirectory)/Coverage -reporttypes:Cobertura -filefilters:-*Build*;-*UnitTest*;-*Mock*;-*usr*
+      condition: eq(variables.is_code_coverage, 1)
 
-# Run
-- task: CmdLine@1
-  displayName: Run to shell
-  inputs:
-    filename: stuart_build
-    arguments: -c ${{ parameters.build_file }} TOOL_CHAIN_TAG=${{ parameters.tool_chain_tag}} TARGET=${{ parameters.build_target}} -a ${{ parameters.build_arch}} ${{ parameters.build_flags}} ${{ parameters.run_flags }} --FlashOnly
-  condition: and(and(gt(variables.pkg_count, 0), succeeded()), eq(variables['Run'], true))
-  timeoutInMinutes: 2
+    - task: PublishCodeCoverageResults@1
+      displayName: 'Publish code coverage'
+      inputs:
+        codeCoverageTool: Cobertura
+        summaryFileLocation: '$(Build.ArtifactStagingDirectory)/Coverage/Cobertura.xml'
+      condition: eq(variables.is_code_coverage, 1)
 
-# Copy the build logs to the artifact staging directory
-- task: CopyFiles@2
-  displayName: "Copy build logs"
-  inputs:
-    targetFolder: "$(Build.ArtifactStagingDirectory)"
-    SourceFolder: "Build"
-    contents: |
-      BUILDLOG_*.txt
-      BUILDLOG_*.md
-      CI_*.txt
-      CI_*.md
-      CISETUP.txt
-      SETUPLOG.txt
-      UPDATE_LOG.txt
-      PREVALLOG.txt
-      TestSuites.xml
-      **/BUILD_TOOLS_REPORT.html
-      **/OVERRIDELOG.TXT
-      BASETOOLS_BUILD*.*
-    flattenFolders: true
-  condition: succeededOrFailed()
-
-# Publish build artifacts to Azure Artifacts/TFS or a file share
-- task: PublishBuildArtifacts@1
-  continueOnError: true
-  displayName: "Publish build logs"
-  inputs:
-    pathtoPublish: "$(Build.ArtifactStagingDirectory)"
-    artifactName: "Build Logs $(System.JobName)"
-  condition: succeededOrFailed()
